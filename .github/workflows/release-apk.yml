@@ -1,0 +1,122 @@
+name: Release Digital Oscilloscope APK
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and Publish Release APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate Gradle Wrapper
+        uses: gradle/actions/wrapper-validation@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-36 build-tools;36.0.0'
+
+      - name: Accept Android SDK Licenses
+        run: |
+          yes | sdkmanager --licenses || true
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
+
+      - name: Restore Debug Keystore if available
+        run: |
+          if [ -f "debug.keystore.base64" ] && [ ! -f "debug.keystore" ]; then
+            echo "Decoding debug.keystore from base64..."
+            base64 -d debug.keystore.base64 > debug.keystore
+          fi
+          if [ -f "debug.keystore" ]; then
+            echo "Debug keystore is ready."
+          else
+            echo "Debug keystore not found in root; Gradle will use standard fallback."
+          fi
+
+      - name: Make Gradle wrapper executable
+        run: chmod +x gradlew
+
+      - name: Build APK with Gradle
+        run: |
+          echo "Building APK for release tag ${{ github.ref_name }}..."
+          ./gradlew assembleDebug --stacktrace --info
+
+      - name: Locate and Rename Release APK
+        run: |
+          echo "Locating built APK..."
+          FOUND_APK=$(find app/build/outputs/apk/debug -name "*.apk" -type f | head -n 1)
+          if [ -z "$FOUND_APK" ]; then
+            FOUND_APK=$(find . -path "*/build/outputs/apk/debug/*.apk" -type f | head -n 1)
+          fi
+          
+          if [ -z "$FOUND_APK" ]; then
+            echo "::error::Could not find APK output!"
+            exit 1
+          fi
+          
+          TAG_NAME="${{ github.ref_name }}"
+          RELEASE_APK_NAME="Digital-Oscilloscope-${TAG_NAME}.apk"
+          
+          mkdir -p release-artifacts
+          cp "$FOUND_APK" "release-artifacts/${RELEASE_APK_NAME}"
+          echo "Renamed APK to release-artifacts/${RELEASE_APK_NAME}"
+          ls -lh "release-artifacts/${RELEASE_APK_NAME}"
+          echo "RELEASE_APK_PATH=release-artifacts/${RELEASE_APK_NAME}" >> $GITHUB_ENV
+          echo "RELEASE_APK_NAME=${RELEASE_APK_NAME}" >> $GITHUB_ENV
+
+      - name: Create GitHub Release and Attach APK
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Digital Oscilloscope ${{ github.ref_name }}
+          body: |
+            ## Digital Oscilloscope ${{ github.ref_name }}
+            
+            Portable 2-Channel Digital Oscilloscope for Android communicating with ESP32 DevKit over Bluetooth Low Energy (BLE).
+            
+            ### Included Artifacts
+            - **${{ env.RELEASE_APK_NAME }}** (Installable Android APK)
+            
+            ### Hardware Channels
+            - **CH1**: GPIO34 / ADC1_CH6 (Input Voltage)
+            - **CH2**: GPIO35 / ADC1_CH7 (Output Voltage)
+            
+            ### SHA-256 Checksum
+            ```
+            $(sha256sum ${{ env.RELEASE_APK_PATH }} | awk '{print $1}')
+            ```
+          files: ${{ env.RELEASE_APK_PATH }}
+          draft: false
+          prerelease: false
+
+      - name: Upload Release Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Digital-Oscilloscope-${{ github.ref_name }}-APK
+          path: ${{ env.RELEASE_APK_PATH }}
+          if-no-files-found: error
+          retention-days: 30

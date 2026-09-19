@@ -1,0 +1,6 @@
+{
+  "name": "Digital Oscilloscope",
+  "description": "A portable 2-channel digital oscilloscope interface that connects to an ESP32 over Bluetooth Low Energy to display real-time waveform data, measurements, and FFT.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
