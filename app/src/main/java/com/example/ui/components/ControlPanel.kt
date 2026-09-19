@@ -149,6 +149,7 @@ fun ControlPanel(
             OutlinedButton(
                 onClick = onSingleTrigger,
                 shape = RoundedCornerShape(8.dp),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 2.dp),
                 modifier = Modifier
                     .weight(1f)
                     .height(48.dp)
@@ -156,9 +157,11 @@ fun ControlPanel(
             ) {
                 Text(
                     text = "SINGLE",
-                    fontSize = 12.sp,
+                    fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
-                    color = ScopeCh2Cyan
+                    color = ScopeCh2Cyan,
+                    maxLines = 1,
+                    softWrap = false
                 )
             }
 
@@ -166,6 +169,7 @@ fun ControlPanel(
             OutlinedButton(
                 onClick = onToggleFreeze,
                 shape = RoundedCornerShape(8.dp),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 2.dp),
                 modifier = Modifier
                     .weight(1.1f)
                     .height(48.dp)
@@ -175,7 +179,9 @@ fun ControlPanel(
                     text = if (runState == RunState.FREEZE) "RESUME" else "FREEZE",
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
-                    color = ScopeWaitAmber
+                    color = ScopeWaitAmber,
+                    maxLines = 1,
+                    softWrap = false
                 )
             }
 
@@ -183,6 +189,7 @@ fun ControlPanel(
             OutlinedButton(
                 onClick = onAutoSet,
                 shape = RoundedCornerShape(8.dp),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 2.dp),
                 modifier = Modifier
                     .weight(1f)
                     .height(48.dp)
@@ -190,9 +197,11 @@ fun ControlPanel(
             ) {
                 Text(
                     text = "AUTO",
-                    fontSize = 12.sp,
+                    fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    softWrap = false
                 )
             }
 
@@ -204,6 +213,7 @@ fun ControlPanel(
                     )
                 },
                 shape = RoundedCornerShape(8.dp),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 2.dp),
                 modifier = Modifier
                     .weight(1f)
                     .height(48.dp)
@@ -213,13 +223,15 @@ fun ControlPanel(
                     imageVector = if (displayDomain == DisplayDomain.TIME) Icons.Default.GraphicEq else Icons.Default.ShowChart,
                     contentDescription = null,
                     tint = ScopeCh2Cyan,
-                    modifier = Modifier.size(16.dp)
+                    modifier = Modifier.size(15.dp)
                 )
                 Text(
                     text = if (displayDomain == DisplayDomain.TIME) "FFT" else "TIME",
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
                     color = ScopeCh2Cyan,
+                    maxLines = 1,
+                    softWrap = false,
                     modifier = Modifier.padding(start = 2.dp)
                 )
             }
@@ -575,7 +587,11 @@ private fun TriggerControlsTab(
     onSlopeChange: (TriggerSlope) -> Unit,
     onLevelChange: (Float) -> Unit
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        // Row 1: Source (CH1 / CH2) and Trigger Mode (AUTO / NORM / SNGL)
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -584,9 +600,15 @@ private fun TriggerControlsTab(
             // Source: CH1 / CH2
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                Text("SRC:", color = Color(0xFF94A3B8), fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+                Text(
+                    text = "SRC:",
+                    color = Color(0xFF94A3B8),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    fontFamily = FontFamily.Monospace
+                )
                 ChannelId.entries.forEach { ch ->
                     PillChoice(
                         text = ch.label,
@@ -602,7 +624,13 @@ private fun TriggerControlsTab(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                Text("MODE:", color = Color(0xFF94A3B8), fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+                Text(
+                    text = "MODE:",
+                    color = Color(0xFF94A3B8),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    fontFamily = FontFamily.Monospace
+                )
                 TriggerMode.entries.forEach { m ->
                     PillChoice(
                         text = m.label.uppercase().take(4),
@@ -612,63 +640,128 @@ private fun TriggerControlsTab(
                     )
                 }
             }
-
-            // Slope: Rising / Falling
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                Text("SLOPE:", color = Color(0xFF94A3B8), fontSize = 11.sp, fontFamily = FontFamily.Monospace)
-                TriggerSlope.entries.forEach { sl ->
-                    PillChoice(
-                        text = if (sl == TriggerSlope.RISING) "↑ RISE" else "↓ FALL",
-                        selected = slope == sl,
-                        color = ScopeTriggerOrange,
-                        onClick = { onSlopeChange(sl) }
-                    )
-                }
-            }
         }
 
-        // Level Steppers and Display
+        // Row 2: Slope (RISE ↑ / FALL ↓) and Trigger Level Readout
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = "LEVEL: ${String.format(java.util.Locale.US, "%.2f V", levelVolts)}",
-                color = ScopeTriggerOrange,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Monospace
-            )
-
+            // Slope: Rising / Falling - clearly horizontal, compact, and readable
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                OutlinedButton(
-                    onClick = { onLevelChange((levelVolts - 0.1f).coerceIn(-100f, 100f)) },
-                    shape = RoundedCornerShape(6.dp),
-                    modifier = Modifier.height(36.dp)
+                Text(
+                    text = "SLOPE:",
+                    color = Color(0xFF94A3B8),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    fontFamily = FontFamily.Monospace
+                )
+                PillChoice(
+                    text = "RISE ↑",
+                    selected = slope == TriggerSlope.RISING,
+                    color = ScopeTriggerOrange,
+                    onClick = { onSlopeChange(TriggerSlope.RISING) }
+                )
+                PillChoice(
+                    text = "FALL ↓",
+                    selected = slope == TriggerSlope.FALLING,
+                    color = ScopeTriggerOrange,
+                    onClick = { onSlopeChange(TriggerSlope.FALLING) }
+                )
+            }
+
+            // Trigger Level Readout Display
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text(
+                    text = "LEVEL:",
+                    color = Color(0xFF94A3B8),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    fontFamily = FontFamily.Monospace
+                )
+                Surface(
+                    color = SurfaceDark,
+                    shape = RoundedCornerShape(4.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, ScopeTriggerOrange.copy(alpha = 0.5f))
                 ) {
-                    Text("-0.1V", fontSize = 11.sp, color = Color.White)
+                    Text(
+                        text = String.format(java.util.Locale.US, "%.2f V", levelVolts),
+                        color = ScopeTriggerOrange,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace,
+                        maxLines = 1,
+                        softWrap = false,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
                 }
-                OutlinedButton(
-                    onClick = { onLevelChange((levelVolts + 0.1f).coerceIn(-100f, 100f)) },
-                    shape = RoundedCornerShape(6.dp),
-                    modifier = Modifier.height(36.dp)
-                ) {
-                    Text("+0.1V", fontSize = 11.sp, color = Color.White)
-                }
-                OutlinedButton(
-                    onClick = { onLevelChange(1.65f) },
-                    shape = RoundedCornerShape(6.dp),
-                    modifier = Modifier.height(36.dp)
-                ) {
-                    Text("1.65V (MID)", fontSize = 11.sp, color = ScopeTriggerOrange)
-                }
+            }
+        }
+
+        // Row 3: Level adjustment stepper buttons (-0.1V, +0.1V, 1.65V MID)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            OutlinedButton(
+                onClick = { onLevelChange((levelVolts - 0.1f).coerceIn(-100f, 100f)) },
+                shape = RoundedCornerShape(6.dp),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 4.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .height(36.dp)
+            ) {
+                Text(
+                    text = "-0.1V",
+                    fontSize = 11.sp,
+                    color = Color.White,
+                    fontFamily = FontFamily.Monospace,
+                    maxLines = 1,
+                    softWrap = false
+                )
+            }
+            OutlinedButton(
+                onClick = { onLevelChange((levelVolts + 0.1f).coerceIn(-100f, 100f)) },
+                shape = RoundedCornerShape(6.dp),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 4.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .height(36.dp)
+            ) {
+                Text(
+                    text = "+0.1V",
+                    fontSize = 11.sp,
+                    color = Color.White,
+                    fontFamily = FontFamily.Monospace,
+                    maxLines = 1,
+                    softWrap = false
+                )
+            }
+            OutlinedButton(
+                onClick = { onLevelChange(1.65f) },
+                shape = RoundedCornerShape(6.dp),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 4.dp),
+                modifier = Modifier
+                    .weight(1.3f)
+                    .height(36.dp)
+            ) {
+                Text(
+                    text = "1.65V (MID)",
+                    fontSize = 11.sp,
+                    color = ScopeTriggerOrange,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace,
+                    maxLines = 1,
+                    softWrap = false
+                )
             }
         }
     }
@@ -696,7 +789,9 @@ private fun PillChoice(
             fontSize = 11.sp,
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
             fontFamily = FontFamily.Monospace,
-            modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
+            maxLines = 1,
+            softWrap = false,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
         )
     }
 }
