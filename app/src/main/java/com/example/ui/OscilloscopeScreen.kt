@@ -1,6 +1,8 @@
 package com.example.ui
 
 import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -22,6 +24,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bluetooth
+import androidx.compose.material.icons.filled.BluetoothConnected
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Tune
@@ -47,7 +50,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.core.content.ContextCompat
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -81,7 +86,11 @@ fun OscilloscopeScreen(
 ) {
     val connectionState by viewModel.connectionState.collectAsState()
     val discoveredDevices by viewModel.discoveredDevices.collectAsState()
+    val isScanning by viewModel.isScanning.collectAsState()
+    val connectedRssi by viewModel.connectedRssi.collectAsState()
     val diagnosticStats by viewModel.diagnosticStats.collectAsState()
+
+    val context = LocalContext.current
 
     val ch1Config by viewModel.ch1Config.collectAsState()
     val ch2Config by viewModel.ch2Config.collectAsState()
@@ -131,7 +140,9 @@ fun OscilloscopeScreen(
     ) { grants ->
         val allGranted = grants.values.all { it }
         if (allGranted) {
-            viewModel.startBleScan()
+            if (!viewModel.connectionState.value.isConnected && viewModel.connectionState.value !is ConnectionState.Connecting) {
+                viewModel.startBleScan(allowScanWhileConnected = false)
+            }
         }
     }
 
@@ -173,7 +184,8 @@ fun OscilloscopeScreen(
                                     is ConnectionState.Connecting -> ScopeCh2Cyan
                                     is ConnectionState.WaitingForData -> ScopeWaitAmber
                                     is ConnectionState.ConnectionLost -> ScopeStopRed
-                                    is ConnectionState.Disconnected -> Color(0xFF475569)
+                                    is ConnectionState.Disconnected,
+                                    is ConnectionState.Disconnecting -> Color(0xFF475569)
                                 }
                             ),
                             modifier = Modifier.padding(start = 4.dp)
@@ -193,7 +205,8 @@ fun OscilloscopeScreen(
                                                 is ConnectionState.Connecting -> ScopeCh2Cyan
                                                 is ConnectionState.WaitingForData -> ScopeWaitAmber
                                                 is ConnectionState.ConnectionLost -> ScopeStopRed
-                                                is ConnectionState.Disconnected -> Color(0xFF64748B)
+                                                is ConnectionState.Disconnected,
+                                                is ConnectionState.Disconnecting -> Color(0xFF64748B)
                                             },
                                             CircleShape
                                         )
@@ -219,12 +232,18 @@ fun OscilloscopeScreen(
                     IconButton(
                         onClick = {
                             showBleDialog = true
-                            permissionLauncher.launch(blePermissions)
+                            if (!connectionState.isConnected && connectionState !is ConnectionState.Connecting && connectionState !is ConnectionState.ConnectionLost) {
+                                if (hasBlePermissions(context)) {
+                                    viewModel.startBleScan(allowScanWhileConnected = false)
+                                } else {
+                                    permissionLauncher.launch(blePermissions)
+                                }
+                            }
                         },
                         modifier = Modifier.testTag("action_ble")
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Bluetooth,
+                            imageVector = if (connectionState.isConnected) Icons.Default.BluetoothConnected else Icons.Default.Bluetooth,
                             contentDescription = "Bluetooth Connection",
                             tint = if (connectionState.isConnected) ScopeRunGreen else ScopeCh2Cyan
                         )
@@ -365,13 +384,28 @@ fun OscilloscopeScreen(
         BleDeviceDialog(
             connectionState = connectionState,
             devices = discoveredDevices,
+            isScanning = isScanning,
+            connectedRssi = connectedRssi,
+            diagnosticStats = diagnosticStats,
             onStartScan = {
-                permissionLauncher.launch(blePermissions)
+                if (hasBlePermissions(context)) {
+                    viewModel.startBleScan(allowScanWhileConnected = false)
+                } else {
+                    permissionLauncher.launch(blePermissions)
+                }
+            },
+            onStartScanForOther = {
+                if (hasBlePermissions(context)) {
+                    viewModel.startBleScan(allowScanWhileConnected = true)
+                } else {
+                    permissionLauncher.launch(blePermissions)
+                }
             },
             onStopScan = viewModel::stopBleScan,
             onConnect = { addr ->
                 viewModel.connectToDevice(addr)
             },
+            onReconnect = viewModel::reconnect,
             onDisconnect = viewModel::disconnect,
             onDismiss = { showBleDialog = false }
         )
@@ -406,3 +440,21 @@ fun OscilloscopeScreen(
         )
     }
 }
+
+private fun hasBlePermissions(context: Context): Boolean {
+    val permissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        listOf(
+            Manifest.permission.BLUETOOTH_SCAN,
+            Manifest.permission.BLUETOOTH_CONNECT
+        )
+    } else {
+        listOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        )
+    }
+    return permissions.all {
+        ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
+    }
+}
+

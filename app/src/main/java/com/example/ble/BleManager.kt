@@ -66,6 +66,12 @@ class BleManager(private val context: Context) {
     private val _discoveredDevices = MutableStateFlow<List<BleDeviceItem>>(emptyList())
     val discoveredDevices: StateFlow<List<BleDeviceItem>> = _discoveredDevices.asStateFlow()
 
+    private val _isScanning = MutableStateFlow(false)
+    val isScanning: StateFlow<Boolean> = _isScanning.asStateFlow()
+
+    private val _connectedRssi = MutableStateFlow<Int?>(null)
+    val connectedRssi: StateFlow<Int?> = _connectedRssi.asStateFlow()
+
     private val _rawPacketFlow = MutableSharedFlow<RawWaveformPacket>(extraBufferCapacity = 128)
     val rawPacketFlow: SharedFlow<RawWaveformPacket> = _rawPacketFlow.asSharedFlow()
 
@@ -85,7 +91,6 @@ class BleManager(private val context: Context) {
     val isBluetoothEnabled: Boolean
         get() = bluetoothAdapter?.isEnabled == true
 
-    private var isScanning = false
     private var scanCallback: ScanCallback? = null
 
     init {
@@ -93,15 +98,41 @@ class BleManager(private val context: Context) {
     }
 
     @SuppressLint("MissingPermission")
-    fun startScan() {
+    fun startScan(allowScanWhileConnected: Boolean = false) {
         val adapter = bluetoothAdapter ?: return
         if (!adapter.isEnabled) return
 
         val scanner: BluetoothLeScanner = adapter.bluetoothLeScanner ?: return
-        if (isScanning) return
+        if (_isScanning.value) {
+            Log.d(TAG, "BLE scan already running; skipping startScan")
+            return
+        }
 
-        _discoveredDevices.value = emptyList()
-        _connectionState.value = ConnectionState.Scanning
+        // If already connected and not explicitly scanning for other devices, do NOT start a scan!
+        if (_connectionState.value.isConnected && !allowScanWhileConnected) {
+            Log.d(TAG, "Device already connected and allowScanWhileConnected=false; skipping scan")
+            return
+        }
+
+        // Keep connected device at top of list if already connected
+        val connectedItem = lastConnectedDevice?.let { dev ->
+            BleDeviceItem(
+                name = dev.name ?: TARGET_DEVICE_NAME,
+                address = dev.address,
+                rssi = _connectedRssi.value ?: -60,
+                isTargetOscilloscope = (dev.name == TARGET_DEVICE_NAME)
+            )
+        }
+        _discoveredDevices.value = if (connectedItem != null && _connectionState.value.isConnected) {
+            listOf(connectedItem)
+        } else {
+            emptyList()
+        }
+
+        if (!_connectionState.value.isConnected) {
+            _connectionState.value = ConnectionState.Scanning
+        }
+        _isScanning.value = true
 
         scanCallback = object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
@@ -114,7 +145,7 @@ class BleManager(private val context: Context) {
 
             override fun onScanFailed(errorCode: Int) {
                 Log.e(TAG, "BLE scan failed with error code $errorCode")
-                isScanning = false
+                _isScanning.value = false
                 if (_connectionState.value == ConnectionState.Scanning) {
                     _connectionState.value = ConnectionState.Disconnected
                 }
@@ -122,38 +153,41 @@ class BleManager(private val context: Context) {
         }
 
         try {
-            isScanning = true
             scanner.startScan(scanCallback)
-            Log.d(TAG, "BLE scan started")
+            Log.d(TAG, "BLE scan started (allowScanWhileConnected=$allowScanWhileConnected)")
 
             // Auto-stop scan after timeout
             scope.launch {
                 delay(SCAN_TIMEOUT_MS)
-                if (isScanning) {
+                if (_isScanning.value) {
                     stopScan()
                 }
             }
         } catch (e: SecurityException) {
             Log.e(TAG, "SecurityException starting BLE scan", e)
-            isScanning = false
-            _connectionState.value = ConnectionState.Disconnected
+            _isScanning.value = false
+            if (_connectionState.value == ConnectionState.Scanning) {
+                _connectionState.value = ConnectionState.Disconnected
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Error starting BLE scan", e)
-            isScanning = false
-            _connectionState.value = ConnectionState.Disconnected
+            _isScanning.value = false
+            if (_connectionState.value == ConnectionState.Scanning) {
+                _connectionState.value = ConnectionState.Disconnected
+            }
         }
     }
 
     @SuppressLint("MissingPermission")
     fun stopScan() {
-        if (!isScanning) return
+        if (!_isScanning.value) return
         try {
             bluetoothAdapter?.bluetoothLeScanner?.stopScan(scanCallback)
             Log.d(TAG, "BLE scan stopped")
         } catch (e: Exception) {
             Log.e(TAG, "Error stopping scan", e)
         } finally {
-            isScanning = false
+            _isScanning.value = false
             scanCallback = null
             if (_connectionState.value == ConnectionState.Scanning) {
                 _connectionState.value = ConnectionState.Disconnected
@@ -193,6 +227,19 @@ class BleManager(private val context: Context) {
 
     @SuppressLint("MissingPermission")
     fun connectToDevice(deviceAddress: String) {
+        // Prevent duplicate connection if already connected to this device
+        if (_connectionState.value.isConnected && lastConnectedDevice?.address == deviceAddress && bluetoothGatt != null) {
+            Log.d(TAG, "Already connected to $deviceAddress; ignoring duplicate connect call")
+            return
+        }
+
+        // Prevent duplicate connection if currently connecting to this device
+        val currentState = _connectionState.value
+        if (currentState is ConnectionState.Connecting && currentState.address == deviceAddress) {
+            Log.d(TAG, "Connection to $deviceAddress already in progress; ignoring duplicate connect call")
+            return
+        }
+
         stopScan()
         userInitiatedDisconnect = false
         reconnectAttempts = 0
@@ -219,10 +266,20 @@ class BleManager(private val context: Context) {
             }
         } catch (e: SecurityException) {
             Log.e(TAG, "SecurityException connecting to device", e)
-            _connectionState.value = ConnectionState.ConnectionLost("Permission denied")
+            _connectionState.value = ConnectionState.ConnectionLost("Permission denied", device.address, devName)
         } catch (e: Exception) {
             Log.e(TAG, "Error connecting to device", e)
-            _connectionState.value = ConnectionState.ConnectionLost(e.message ?: "Connection failed")
+            _connectionState.value = ConnectionState.ConnectionLost(e.message ?: "Connection failed", device.address, devName)
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    fun reconnect() {
+        val dev = lastConnectedDevice
+        if (dev != null) {
+            connectToDevice(dev.address)
+        } else {
+            connectToDefaultOscilloscope()
         }
     }
 
@@ -240,6 +297,7 @@ class BleManager(private val context: Context) {
     fun disconnect() {
         userInitiatedDisconnect = true
         reconnectJob?.cancel()
+        _connectionState.value = ConnectionState.Disconnecting
         try {
             bluetoothGatt?.disconnect()
             bluetoothGatt?.close()
@@ -248,7 +306,19 @@ class BleManager(private val context: Context) {
         } finally {
             bluetoothGatt = null
             lastPacketTime = 0L
+            _connectedRssi.value = null
             _connectionState.value = ConnectionState.Disconnected
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    fun readRssi() {
+        try {
+            if (_connectionState.value.isConnected && bluetoothGatt != null) {
+                bluetoothGatt?.readRemoteRssi()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "readRemoteRssi call failed", e)
         }
     }
 
@@ -259,9 +329,11 @@ class BleManager(private val context: Context) {
             val deviceAddress = gatt.device?.address ?: ""
 
             if (newState == BluetoothProfile.STATE_CONNECTED) {
-                Log.d(TAG, "Connected to GATT server. Discovering services...")
-                _connectionState.value = ConnectionState.Connected(deviceName, deviceAddress)
+                Log.d(TAG, "Connected to GATT server ($deviceAddress). Discovering services...")
+                lastConnectedDevice = gatt.device
+                userInitiatedDisconnect = false
                 reconnectAttempts = 0
+                _connectionState.value = ConnectionState.Connected(deviceName, deviceAddress, _connectedRssi.value)
 
                 // Request MTU 512 for high-throughput waveform transfer
                 try {
@@ -270,17 +342,31 @@ class BleManager(private val context: Context) {
                     Log.w(TAG, "requestMtu failed, proceeding with service discovery", e)
                 }
                 gatt.discoverServices()
+                readRssi()
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 Log.w(TAG, "Disconnected from GATT server with status $status")
                 gatt.close()
                 bluetoothGatt = null
+                _connectedRssi.value = null
 
                 if (userInitiatedDisconnect) {
                     _connectionState.value = ConnectionState.Disconnected
                 } else {
-                    _connectionState.value = ConnectionState.ConnectionLost("Status code: $status")
-                    scheduleAutoReconnect()
+                    val devName = lastConnectedDevice?.name ?: deviceName
+                    val devAddr = lastConnectedDevice?.address ?: deviceAddress
+                    _connectionState.value = ConnectionState.ConnectionLost(
+                        reason = "Device disconnected (status: $status)",
+                        lastDeviceAddress = devAddr,
+                        lastDeviceName = devName
+                    )
                 }
+            }
+        }
+
+        @SuppressLint("MissingPermission")
+        override fun onReadRemoteRssi(gatt: BluetoothGatt, rssi: Int, status: Int) {
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                _connectedRssi.value = rssi
             }
         }
 
@@ -358,7 +444,8 @@ class BleManager(private val context: Context) {
         }
 
         val devName = gatt.device?.name ?: TARGET_DEVICE_NAME
-        _connectionState.value = ConnectionState.WaitingForData(devName)
+        val devAddr = gatt.device?.address ?: ""
+        _connectionState.value = ConnectionState.WaitingForData(devName, devAddr, _connectedRssi.value)
     }
 
     /**
@@ -449,11 +536,16 @@ class BleManager(private val context: Context) {
             )
 
             // Update ConnectionState with live rate
-            if (_connectionState.value is ConnectionState.ReceivingData || _connectionState.value is ConnectionState.WaitingForData || _connectionState.value is ConnectionState.Connected) {
+            if (_connectionState.value.isConnected) {
+                val devName = lastConnectedDevice?.name ?: TARGET_DEVICE_NAME
+                val devAddr = lastConnectedDevice?.address ?: ""
                 _connectionState.value = ConnectionState.ReceivingData(
+                    deviceName = devName,
+                    address = devAddr,
                     sampleCount = samplesInCurrentWindow,
                     fps = pps,
-                    packetLossRate = lossRate
+                    packetLossRate = lossRate,
+                    rssi = _connectedRssi.value
                 )
             }
 
@@ -464,54 +556,31 @@ class BleManager(private val context: Context) {
     }
 
     /**
-     * Watchdog monitors received packet timestamps.
+     * Watchdog monitors received packet timestamps and polls RSSI.
      * If connected but no packets arrive for > 2 seconds, transition state to WaitingForData.
      */
     private fun startWatchdog() {
         watchdogJob?.cancel()
         watchdogJob = scope.launch {
+            var tickCount = 0
             while (isActive) {
                 delay(1000)
+                tickCount++
                 val state = _connectionState.value
                 val now = System.currentTimeMillis()
 
-                if (state is ConnectionState.ReceivingData) {
-                    if (now - lastPacketTime > PACKET_TIMEOUT_MS) {
-                        val devName = lastConnectedDevice?.name ?: TARGET_DEVICE_NAME
-                        _connectionState.value = ConnectionState.WaitingForData(devName)
+                if (state.isConnected) {
+                    // Poll RSSI every 2 seconds while connected
+                    if (tickCount % 2 == 0) {
+                        readRssi()
                     }
-                }
-            }
-        }
-    }
-
-    /**
-     * Automatic reconnection logic on unexpected disconnect.
-     */
-    @SuppressLint("MissingPermission")
-    private fun scheduleAutoReconnect() {
-        if (userInitiatedDisconnect) return
-        val device = lastConnectedDevice ?: return
-
-        reconnectJob?.cancel()
-        reconnectJob = scope.launch {
-            reconnectAttempts++
-            val backoffMs = (reconnectAttempts * 2000L).coerceAtMost(10000L)
-            Log.d(TAG, "Will attempt reconnect #$reconnectAttempts in ${backoffMs}ms")
-            delay(backoffMs)
-
-            if (!userInitiatedDisconnect && _connectionState.value is ConnectionState.ConnectionLost) {
-                val devName = device.name ?: TARGET_DEVICE_NAME
-                _connectionState.value = ConnectionState.Connecting(devName, device.address)
-                try {
-                    bluetoothGatt = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                        device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
-                    } else {
-                        device.connectGatt(context, false, gattCallback)
+                    if (state is ConnectionState.ReceivingData) {
+                        if (now - lastPacketTime > PACKET_TIMEOUT_MS) {
+                            val devName = lastConnectedDevice?.name ?: TARGET_DEVICE_NAME
+                            val devAddr = lastConnectedDevice?.address ?: ""
+                            _connectionState.value = ConnectionState.WaitingForData(devName, devAddr, _connectedRssi.value)
+                        }
                     }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Auto-reconnect failed", e)
-                    scheduleAutoReconnect()
                 }
             }
         }

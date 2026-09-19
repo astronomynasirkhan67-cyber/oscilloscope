@@ -29,6 +29,8 @@ class OscilloscopeViewModel(application: Application) : AndroidViewModel(applica
 
     val connectionState: StateFlow<ConnectionState> = repository.connectionState
     val discoveredDevices: StateFlow<List<BleDeviceItem>> = repository.discoveredDevices
+    val isScanning: StateFlow<Boolean> = repository.isScanning
+    val connectedRssi: StateFlow<Int?> = repository.connectedRssi
     val diagnosticStats: StateFlow<DiagnosticStats> = repository.diagnosticStats
 
     val ch1Config: StateFlow<ChannelConfig> = repository.ch1Config
@@ -56,8 +58,8 @@ class OscilloscopeViewModel(application: Application) : AndroidViewModel(applica
     private val _userMessage = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val userMessage: SharedFlow<String> = _userMessage.asSharedFlow()
 
-    fun startBleScan() {
-        repository.startBleScan()
+    fun startBleScan(allowScanWhileConnected: Boolean = false) {
+        repository.startBleScan(allowScanWhileConnected)
     }
 
     fun stopBleScan() {
@@ -66,6 +68,10 @@ class OscilloscopeViewModel(application: Application) : AndroidViewModel(applica
 
     fun connectToDevice(address: String) {
         repository.connectToDevice(address)
+    }
+
+    fun reconnect() {
+        repository.reconnect()
     }
 
     fun disconnect() {

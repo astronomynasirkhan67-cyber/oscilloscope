@@ -83,6 +83,8 @@ class OscilloscopeRepository(private val context: Context) {
 
     val connectionState: StateFlow<ConnectionState> = bleManager.connectionState
     val discoveredDevices: StateFlow<List<BleDeviceItem>> = bleManager.discoveredDevices
+    val isScanning: StateFlow<Boolean> = bleManager.isScanning
+    val connectedRssi: StateFlow<Int?> = bleManager.connectedRssi
     val diagnosticStats: StateFlow<DiagnosticStats> = bleManager.diagnosticStats
     val savedCaptures: StateFlow<List<SavedCapture>> = captureRepository.savedCaptures
 
@@ -134,9 +136,10 @@ class OscilloscopeRepository(private val context: Context) {
         }
     }
 
-    fun startBleScan() = bleManager.startScan()
+    fun startBleScan(allowScanWhileConnected: Boolean = false) = bleManager.startScan(allowScanWhileConnected)
     fun stopBleScan() = bleManager.stopScan()
     fun connectToDevice(address: String) = bleManager.connectToDevice(address)
+    fun reconnect() = bleManager.reconnect()
     fun disconnect() = bleManager.disconnect()
 
     fun setRunState(state: RunState) {
