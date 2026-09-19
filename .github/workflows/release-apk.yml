@@ -45,17 +45,26 @@ jobs:
         with:
           cache-read-only: false
 
-      - name: Restore Debug Keystore if available
+      - name: Ensure Debug Keystore
         run: |
-          if [ -f "debug.keystore.base64" ] && [ ! -f "debug.keystore" ]; then
-            echo "Decoding debug.keystore from base64..."
-            base64 -d debug.keystore.base64 > debug.keystore
+          if [ ! -f "debug.keystore" ]; then
+            if [ -f "debug.keystore.base64" ]; then
+              echo "Restoring debug.keystore from debug.keystore.base64..."
+              base64 -d debug.keystore.base64 > debug.keystore
+            else
+              echo "Generating standard debug.keystore..."
+              keytool -genkeypair -v \
+                -keystore debug.keystore \
+                -alias androiddebugkey \
+                -keypass android \
+                -storepass android \
+                -keyalg RSA \
+                -keysize 2048 \
+                -validity 10000 \
+                -dname "CN=Android Debug,O=Android,C=US"
+            fi
           fi
-          if [ -f "debug.keystore" ]; then
-            echo "Debug keystore is ready."
-          else
-            echo "Debug keystore not found in root; Gradle will use standard fallback."
-          fi
+          ls -la debug.keystore
 
       - name: Make Gradle wrapper executable
         run: chmod +x gradlew
@@ -66,11 +75,12 @@ jobs:
           ./gradlew assembleDebug --stacktrace --info
 
       - name: Locate and Rename Release APK
+        id: find_release_apk
         run: |
           echo "Locating built APK..."
-          FOUND_APK=$(find app/build/outputs/apk/debug -name "*.apk" -type f | head -n 1)
+          FOUND_APK=$(find . -path "*/build/outputs/apk/debug/*.apk" -not -name "*unaligned*" -type f | head -n 1)
           if [ -z "$FOUND_APK" ]; then
-            FOUND_APK=$(find . -path "*/build/outputs/apk/debug/*.apk" -type f | head -n 1)
+            FOUND_APK=$(find . -path "*/build/outputs/apk/*.apk" -type f | head -n 1)
           fi
           
           if [ -z "$FOUND_APK" ]; then
