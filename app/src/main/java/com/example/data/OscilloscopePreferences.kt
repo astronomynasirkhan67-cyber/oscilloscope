@@ -84,7 +84,7 @@ class OscilloscopePreferences(context: Context) {
             .apply()
     }
 
-    fun loadTimePerDiv(): Float = prefs.getFloat(KEY_TIME_DIV, 1e-3f) // 1 ms/div default
+    fun loadTimePerDiv(): Float = prefs.getFloat(KEY_TIME_DIV, 50e-6f) // 50 µs/div default (optimal for 10-11 kHz signals)
     fun saveTimePerDiv(v: Float) = prefs.edit().putFloat(KEY_TIME_DIV, v).apply()
 
     fun loadSamplingRate(): Float = prefs.getFloat(KEY_SAMPLING_RATE, 100000f) // 100 kHz default

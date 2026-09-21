@@ -449,16 +449,21 @@ class BleManager(private val context: Context) {
     }
 
     /**
-     * Binary packet decoder strictly according to specification:
-     * - Little-endian encoding
-     * - Byte 0-1: sequence number (uint16)
-     * - Byte 2: number of samples N (uint8)
-     * - Then N samples:
-     *   - CH1 uint16 (2 bytes)
-     *   - CH2 uint16 (2 bytes)
+     * Binary packet decoder supporting both:
+     * 1. Upgraded High-Speed V2 Protocol:
+     *    - Magic header: 0xAA, 0x55 (bytes 0-1)
+     *    - Protocol version: 0x02 (byte 2)
+     *    - Channel ID: 0x03 (DUAL interleaved) (byte 3)
+     *    - Sequence number: uint16 little-endian (bytes 4-5)
+     *    - Sample count: uint16 little-endian (bytes 6-7)
+     *    - Samples: N pairs of [CH1 uint16, CH2 uint16] (bytes 8 .. 8+4*N-1)
+     *    - Checksum: 8-bit XOR checksum (last byte)
+     * 2. Legacy Protocol:
+     *    - Sequence number uint16 (bytes 0-1)
+     *    - Number of samples uint8 (byte 2)
+     *    - Interleaved CH1, CH2 uint16 pairs (bytes 3+)
      *
-     * Validates packet size, sequence gaps, corrupted packets.
-     * Safe execution: Never crashes on malformed data.
+     * Validates packet size, checksum, sequence gaps, and corrupted packets.
      */
     private fun processWaveformPacket(bytes: ByteArray) {
         if (bytes.size < 3) {
@@ -467,15 +472,77 @@ class BleManager(private val context: Context) {
             return
         }
 
-        val seqNumber = (bytes[0].toInt() and 0xFF) or ((bytes[1].toInt() and 0xFF) shl 8)
-        val numSamples = bytes[2].toInt() and 0xFF
-        val expectedLength = 3 + (numSamples * 4)
+        val isV2Packet = bytes.size >= 8 &&
+                (bytes[0].toInt() and 0xFF) == 0xAA &&
+                (bytes[1].toInt() and 0xFF) == 0x55
 
-        if (bytes.size < expectedLength) {
-            // Corrupted or incomplete packet
-            corruptedPackets++
-            updateDiagnostics(0)
-            return
+        val seqNumber: Int
+        val numSamples: Int
+        val ch1Raw: IntArray
+        val ch2Raw: IntArray
+
+        if (isV2Packet) {
+            val version = bytes[2].toInt() and 0xFF
+            val channel = bytes[3].toInt() and 0xFF
+            seqNumber = (bytes[4].toInt() and 0xFF) or ((bytes[5].toInt() and 0xFF) shl 8)
+            numSamples = (bytes[6].toInt() and 0xFF) or ((bytes[7].toInt() and 0xFF) shl 8)
+
+            val payloadBeforeChecksum = 8 + (numSamples * 4)
+            val expectedLengthWithChecksum = payloadBeforeChecksum + 1
+
+            if (bytes.size < expectedLengthWithChecksum) {
+                corruptedPackets++
+                updateDiagnostics(0)
+                return
+            }
+
+            // Verify XOR checksum
+            var calcChecksum = 0
+            for (i in 0 until payloadBeforeChecksum) {
+                calcChecksum = calcChecksum xor (bytes[i].toInt() and 0xFF)
+            }
+            val receivedChecksum = bytes[payloadBeforeChecksum].toInt() and 0xFF
+            if (calcChecksum != receivedChecksum) {
+                Log.w(TAG, "Checksum mismatch: calc=0x${calcChecksum.toString(16)} recv=0x${receivedChecksum.toString(16)}")
+                corruptedPackets++
+                updateDiagnostics(0)
+                return
+            }
+
+            ch1Raw = IntArray(numSamples)
+            ch2Raw = IntArray(numSamples)
+
+            var offset = 8
+            for (i in 0 until numSamples) {
+                val ch1Val = (bytes[offset].toInt() and 0xFF) or ((bytes[offset + 1].toInt() and 0xFF) shl 8)
+                val ch2Val = (bytes[offset + 2].toInt() and 0xFF) or ((bytes[offset + 3].toInt() and 0xFF) shl 8)
+                ch1Raw[i] = ch1Val
+                ch2Raw[i] = ch2Val
+                offset += 4
+            }
+        } else {
+            // Legacy protocol fallback
+            seqNumber = (bytes[0].toInt() and 0xFF) or ((bytes[1].toInt() and 0xFF) shl 8)
+            numSamples = bytes[2].toInt() and 0xFF
+            val expectedLength = 3 + (numSamples * 4)
+
+            if (bytes.size < expectedLength) {
+                corruptedPackets++
+                updateDiagnostics(0)
+                return
+            }
+
+            ch1Raw = IntArray(numSamples)
+            ch2Raw = IntArray(numSamples)
+
+            var offset = 3
+            for (i in 0 until numSamples) {
+                val ch1Val = (bytes[offset].toInt() and 0xFF) or ((bytes[offset + 1].toInt() and 0xFF) shl 8)
+                val ch2Val = (bytes[offset + 2].toInt() and 0xFF) or ((bytes[offset + 3].toInt() and 0xFF) shl 8)
+                ch1Raw[i] = ch1Val
+                ch2Raw[i] = ch2Val
+                offset += 4
+            }
         }
 
         // Check for sequence continuity & dropped packets
@@ -489,18 +556,6 @@ class BleManager(private val context: Context) {
         lastSequenceNumber = seqNumber
         totalPackets++
         lastPacketTime = System.currentTimeMillis()
-
-        val ch1Raw = IntArray(numSamples)
-        val ch2Raw = IntArray(numSamples)
-
-        var offset = 3
-        for (i in 0 until numSamples) {
-            val ch1Val = (bytes[offset].toInt() and 0xFF) or ((bytes[offset + 1].toInt() and 0xFF) shl 8)
-            val ch2Val = (bytes[offset + 2].toInt() and 0xFF) or ((bytes[offset + 3].toInt() and 0xFF) shl 8)
-            ch1Raw[i] = ch1Val
-            ch2Raw[i] = ch2Val
-            offset += 4
-        }
 
         val packet = RawWaveformPacket(
             sequenceNumber = seqNumber,

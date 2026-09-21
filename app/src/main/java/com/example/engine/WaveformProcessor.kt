@@ -17,7 +17,7 @@ class WaveformProcessor(
     private val dispatcher: CoroutineDispatcher = Dispatchers.Default
 ) {
     companion object {
-        const val BUFFER_CAPACITY = 8192
+        const val BUFFER_CAPACITY = 65536
         const val GRID_HORIZONTAL_DIVS = 10
     }
 

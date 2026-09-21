@@ -326,20 +326,75 @@ private fun DrawScope.drawWaveform(
     traceColor: Color,
     glowColor: Color
 ) {
-    if (voltages.size < 2 || voltsPerDiv <= 0f) return
+    val count = voltages.size
+    if (count < 2 || voltsPerDiv <= 0f) return
 
     val path = Path()
-    val count = voltages.size
-    val dx = width / (count - 1).toFloat()
+    val maxPixels = (width.toInt()).coerceIn(300, 1000)
 
-    val firstY = centerY - ((voltages[0] / voltsPerDiv) + verticalOffsetDiv) * divHeight
-    path.moveTo(0f, firstY.coerceIn(-50f, height + 50f))
+    if (count <= maxPixels) {
+        // Direct rendering when point count is within display pixel resolution
+        val dx = width / (count - 1).toFloat()
+        val firstY = centerY - ((voltages[0] / voltsPerDiv) + verticalOffsetDiv) * divHeight
+        path.moveTo(0f, firstY.coerceIn(-50f, height + 50f))
 
-    for (i in 1 until count) {
-        val x = i * dx
-        val v = voltages[i]
-        val y = centerY - ((v / voltsPerDiv) + verticalOffsetDiv) * divHeight
-        path.lineTo(x, y.coerceIn(-50f, height + 50f))
+        for (i in 1 until count) {
+            val x = i * dx
+            val v = voltages[i]
+            val y = centerY - ((v / voltsPerDiv) + verticalOffsetDiv) * divHeight
+            path.lineTo(x, y.coerceIn(-50f, height + 50f))
+        }
+    } else {
+        // High-Speed Peak-Detect (Min/Max Envelope) Decimation:
+        // Preserves fast transients, peak-to-peak extrema, transitions, and waveform shape
+        // while bounding rendered vertices to at most 2 * maxPixels for 60 FPS rendering.
+        val numBins = maxPixels
+        val dx = width / numBins.toFloat()
+        var hasMoved = false
+
+        for (bin in 0 until numBins) {
+            val startIdx = (bin.toLong() * count / numBins).toInt()
+            val endIdx = (((bin + 1).toLong() * count / numBins).toInt()).coerceIn(startIdx + 1, count)
+
+            var minV = voltages[startIdx]
+            var maxV = voltages[startIdx]
+            var minIdx = startIdx
+            var maxIdx = startIdx
+
+            for (i in startIdx + 1 until endIdx) {
+                val v = voltages[i]
+                if (v < minV) {
+                    minV = v
+                    minIdx = i
+                }
+                if (v > maxV) {
+                    maxV = v
+                    maxIdx = i
+                }
+            }
+
+            val x = bin * dx
+            val yMin = centerY - ((minV / voltsPerDiv) + verticalOffsetDiv) * divHeight
+            val yMax = centerY - ((maxV / voltsPerDiv) + verticalOffsetDiv) * divHeight
+
+            // Preserve temporal transition order within the bin
+            val (yFirst, ySecond) = if (minIdx <= maxIdx) {
+                Pair(yMin, yMax)
+            } else {
+                Pair(yMax, yMin)
+            }
+
+            if (!hasMoved) {
+                path.moveTo(x, yFirst.coerceIn(-50f, height + 50f))
+                hasMoved = true
+            } else {
+                path.lineTo(x, yFirst.coerceIn(-50f, height + 50f))
+            }
+
+            if (minV != maxV) {
+                path.lineTo(x, ySecond.coerceIn(-50f, height + 50f))
+            }
+        }
     }
 
     // Phosphor glow layer

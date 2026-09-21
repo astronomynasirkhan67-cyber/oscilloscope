@@ -31,6 +31,9 @@ enum class DisplayDomain(val label: String) {
 data class TimeDivOption(val seconds: Float, val label: String)
 
 val AVAILABLE_TIME_DIVS = listOf(
+    TimeDivOption(10e-6f, "10 µs"),
+    TimeDivOption(20e-6f, "20 µs"),
+    TimeDivOption(50e-6f, "50 µs"),
     TimeDivOption(100e-6f, "100 µs"),
     TimeDivOption(200e-6f, "200 µs"),
     TimeDivOption(500e-6f, "500 µs"),
